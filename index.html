@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FingerDraw Balanced</title>
+<title>FingerDraw Final</title>
 
 <style>
 body { margin:0; overflow:hidden; background:#050a10; color:white; font-family:sans-serif;}
@@ -25,25 +25,29 @@ video, canvas {
   border:2px solid red;
   transform:translate(-50%,-50%);
   pointer-events:none;
+  z-index:20;
+  transition: box-shadow 0.2s;
 }
 
 #hud {
   position:absolute;
   top:10px;
   left:10px;
-  background:rgba(0,0,0,0.6);
-  padding:10px;
+  background:rgba(0,0,0,0.7);
+  padding:12px;
   border-radius:10px;
-  font-size:13px;
+  font-size:14px;
+  z-index:30;
 }
 
 #toolbar {
   position:absolute;
   bottom:10px;
   left:10px;
+  z-index:30;
 }
 
-button, input { margin:3px; padding:6px; }
+button, input { margin:4px; padding:6px; }
 </style>
 </head>
 
@@ -55,9 +59,13 @@ button, input { margin:3px; padding:6px; }
 <div id="indicator"></div>
 
 <div id="hud">
-🤏 Pinch = Draw<br>
-✌️ Peace = Erase<br><br>
-🔴 Idle | 🟢 Draw | 🟠 Erase
+<b>Controls:</b><br>
+🤏 Pinch → Draw<br>
+✌️ Peace → Erase<br><br>
+<b>Status:</b><br>
+🔴 Idle<br>
+🟢 Drawing<br>
+🟠 Erasing
 </div>
 
 <div id="toolbar">
@@ -111,13 +119,7 @@ let peaceFrames=0;
 // ===== HELPERS =====
 function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
 
-function isUp(kp,tip,pip){
-  return kp[tip].y < kp[pip].y;
-}
-
-function isDown(kp,tip,pip){
-  return kp[tip].y > kp[pip].y;
-}
+function isUp(kp,tip,pip){ return kp[tip].y < kp[pip].y; }
 
 function smooth(x,y){
   if(prevX===null){ prevX=x; prevY=y; }
@@ -146,7 +148,7 @@ async function loop(){
 
     const handSize = dist(kp[0], kp[9]);
 
-    // 🤏 PINCH
+    // 🤏 PINCH (adaptive)
     const pinchDist = dist(kp[4], kp[8]);
     const pinchThreshold = handSize * 0.4;
 
@@ -155,19 +157,17 @@ async function loop(){
 
     const pinchActive = pinchFrames > 2;
 
-    // ✌️ PEACE SIGN
+    // ✌️ PEACE (improved)
     const peace =
       isUp(kp,8,6) &&
       isUp(kp,12,10) &&
-      isDown(kp,16,14) &&
-      isDown(kp,20,18);
+      dist(kp[8], kp[12]) > handSize * 0.2;
 
     if(peace) peaceFrames++;
     else peaceFrames=0;
 
-    const peaceActive = peaceFrames > 2;
+    const peaceActive = peaceFrames > 1;
 
-    // PRIORITY: ERASE > DRAW
     if(peaceActive){
       erase=true;
       point={
@@ -175,6 +175,7 @@ async function loop(){
         y: kp[8].y * canvas.height / video.videoHeight
       };
       indicator.style.borderColor="orange";
+      indicator.style.boxShadow="0 0 15px orange";
     }
     else if(pinchActive){
       point={
@@ -182,9 +183,11 @@ async function loop(){
         y: kp[8].y * canvas.height / video.videoHeight
       };
       indicator.style.borderColor="lime";
+      indicator.style.boxShadow="0 0 15px lime";
     }
     else{
       indicator.style.borderColor="red";
+      indicator.style.boxShadow="none";
     }
   }
 
@@ -221,7 +224,7 @@ async function loop(){
 
 loop();
 
-// UI
+// ===== UI =====
 document.getElementById("colorPicker").oninput=e=> color=e.target.value;
 
 document.getElementById("clear").onclick=()=>{
