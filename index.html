@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FingerDraw Balanced</title>
+
+<style>
+body { margin:0; overflow:hidden; background:#050a10; color:white; font-family:sans-serif;}
+
+video, canvas {
+  position:absolute;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+.mirror { transform: scaleX(-1); }
+
+#indicator {
+  position:absolute;
+  width:20px;
+  height:20px;
+  border-radius:50%;
+  border:2px solid red;
+  transform:translate(-50%,-50%);
+  pointer-events:none;
+}
+
+#hud {
+  position:absolute;
+  top:10px;
+  left:10px;
+  background:rgba(0,0,0,0.6);
+  padding:10px;
+  border-radius:10px;
+  font-size:13px;
+}
+
+#toolbar {
+  position:absolute;
+  bottom:10px;
+  left:10px;
+}
+
+button, input { margin:3px; padding:6px; }
+</style>
+</head>
+
+<body>
+
+<video id="video" autoplay playsinline muted class="mirror"></video>
+<canvas id="draw"></canvas>
+
+<div id="indicator"></div>
+
+<div id="hud">
+🤏 Pinch = Draw<br>
+✌️ Peace = Erase<br><br>
+🔴 Idle | 🟢 Draw | 🟠 Erase
+</div>
+
+<div id="toolbar">
+<input type="color" id="colorPicker" value="#00ffe7">
+<button id="undo">Undo</button>
+<button id="clear">Clear</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+
+<script>
+(async () => {
+
+const video = document.getElementById('video');
+const canvas = document.getElementById('draw');
+const ctx = canvas.getContext('2d');
+const indicator = document.getElementById('indicator');
+
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+
+let color = "#00ffe7";
+
+// ===== CAMERA =====
+const stream = await navigator.mediaDevices.getUserMedia({ video:true });
+video.srcObject = stream;
+await video.play();
+
+// ===== MODEL =====
+const detector = await handPoseDetection.createDetector(
+  handPoseDetection.SupportedModels.MediaPipeHands,
+  {
+    runtime:'mediapipe',
+    solutionPath:'https://cdn.jsdelivr.net/npm/@mediapipe/hands',
+    modelType:'lite'
+  }
+);
+
+// ===== STATE =====
+let lastX=null,lastY=null;
+let prevX=null,prevY=null;
+let drawing=false;
+let history=[];
+
+let pinchFrames=0;
+let peaceFrames=0;
+
+// ===== HELPERS =====
+function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
+
+function isUp(kp,tip,pip){
+  return kp[tip].y < kp[pip].y;
+}
+
+function isDown(kp,tip,pip){
+  return kp[tip].y > kp[pip].y;
+}
+
+function smooth(x,y){
+  if(prevX===null){ prevX=x; prevY=y; }
+  const alpha=0.6;
+  prevX=prevX*alpha + x*(1-alpha);
+  prevY=prevY*alpha + y*(1-alpha);
+  return {x:prevX,y:prevY};
+}
+
+function saveHistory(){
+  history.push(ctx.getImageData(0,0,canvas.width,canvas.height));
+  if(history.length>20) history.shift();
+}
+
+// ===== LOOP =====
+async function loop(){
+  requestAnimationFrame(loop);
+
+  const hands = await detector.estimateHands(video,{flipHorizontal:true});
+
+  let point=null;
+  let erase=false;
+
+  if(hands.length){
+    const kp=hands[0].keypoints;
+
+    const handSize = dist(kp[0], kp[9]);
+
+    // 🤏 PINCH
+    const pinchDist = dist(kp[4], kp[8]);
+    const pinchThreshold = handSize * 0.4;
+
+    if(pinchDist < pinchThreshold) pinchFrames++;
+    else pinchFrames=0;
+
+    const pinchActive = pinchFrames > 2;
+
+    // ✌️ PEACE SIGN
+    const peace =
+      isUp(kp,8,6) &&
+      isUp(kp,12,10) &&
+      isDown(kp,16,14) &&
+      isDown(kp,20,18);
+
+    if(peace) peaceFrames++;
+    else peaceFrames=0;
+
+    const peaceActive = peaceFrames > 2;
+
+    // PRIORITY: ERASE > DRAW
+    if(peaceActive){
+      erase=true;
+      point={
+        x: kp[8].x * canvas.width / video.videoWidth,
+        y: kp[8].y * canvas.height / video.videoHeight
+      };
+      indicator.style.borderColor="orange";
+    }
+    else if(pinchActive){
+      point={
+        x: kp[8].x * canvas.width / video.videoWidth,
+        y: kp[8].y * canvas.height / video.videoHeight
+      };
+      indicator.style.borderColor="lime";
+    }
+    else{
+      indicator.style.borderColor="red";
+    }
+  }
+
+  if(point){
+    const sm=smooth(point.x,point.y);
+
+    indicator.style.left=sm.x+"px";
+    indicator.style.top=sm.y+"px";
+
+    if(!drawing){
+      drawing=true;
+      saveHistory();
+      lastX=sm.x; lastY=sm.y;
+    } else {
+      if(erase){
+        ctx.clearRect(sm.x-18, sm.y-18, 36, 36);
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(lastX,lastY);
+        ctx.lineTo(sm.x,sm.y);
+        ctx.strokeStyle=color;
+        ctx.lineWidth=5;
+        ctx.lineCap="round";
+        ctx.stroke();
+      }
+      lastX=sm.x; lastY=sm.y;
+    }
+  } else {
+    drawing=false;
+    lastX=null;
+    prevX=null;
+  }
+}
+
+loop();
+
+// UI
+document.getElementById("colorPicker").oninput=e=> color=e.target.value;
+
+document.getElementById("clear").onclick=()=>{
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+};
+
+document.getElementById("undo").onclick=()=>{
+  if(history.length){
+    ctx.putImageData(history.pop(),0,0);
+  }
+};
+
+})();
+</script>
+
+</body>
+</html>
